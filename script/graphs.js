@@ -1,7 +1,6 @@
 import { formatBytes, showNotification } from '../static/notif.js';
 import { loginn } from './login.js';
 
-// Debounce function to limit resize event calls
 function debounce(func, wait) {
   let timeout;
   return function (...args) {
@@ -115,12 +114,10 @@ export async function fetchUserData() {
     const totalXP = (result.data.xpTRa || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
     document.getElementById('total-xp').textContent = formatBytes(totalXP || 0);
 
-    // Render visualizations
     renderLevelSVG(result.data.level?.[0] || { amount: 0 });
     renderSkillsSVG(result.data.skillsTransactions || []);
     renderXPGraph(result.data.xpTRa || []);
 
-    // Store data for resize re-rendering
     window.graphData = {
       level: result.data.level?.[0] || { amount: 0 },
       skills: result.data.skillsTransactions || [],
@@ -157,7 +154,7 @@ export async function fetchUserData() {
     const currentLevel = Math.floor(level);
     const circumference = 2 * Math.PI * 40;
     const progress = level % 1;
-    const strokeDashoffset = circumference * (1 - progress);
+    // const strokeDashoffset = circumference * (1 - progress);
 
     svg.innerHTML = `
       <defs>
@@ -167,12 +164,6 @@ export async function fetchUserData() {
         </linearGradient>
       </defs>
       <circle cx="60" cy="60" r="40" fill="none" stroke="#2d3748" stroke-width="8"/>
-      <circle cx="60" cy="60" r="40" fill="none" stroke="url(#level-gradient)" stroke-width="8" 
-              stroke-linecap="round" stroke-dasharray="${circumference}" 
-              stroke-dashoffset="${strokeDashoffset}" transform="rotate(-90 60 60)">
-        <animate attributeName="stroke-dashoffset" from="${circumference}" to="${strokeDashoffset}" 
-                 dur="1s" fill="freeze"/>
-      </circle>
       <text x="60" y="67" text-anchor="middle" fill="var(--text-color)" font-size="20" font-weight="bold">
         ${currentLevel}
       </text>
@@ -208,8 +199,8 @@ export async function fetchUserData() {
     const scale = containerWidth / baseWidth;
     const skillHeight = 60 * scale;
     const skillSpacing = 20 * scale;
-    const width = containerWidth;
-    const height = (skillHeight + skillSpacing) * (skillsData.length || 1);
+    // const width = containerWidth;
+    // const height = (skillHeight + skillSpacing) * (skillsData.length || 1);
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
@@ -265,27 +256,28 @@ export async function fetchUserData() {
     const containerWidth = container.offsetWidth || 800;
     const baseWidth = 800;
     const scale = containerWidth / baseWidth;
-    const width = containerWidth;
-    const height = 400 * scale;
-    const padding = { top: 50 * scale, right: 60 * scale, bottom: 80 * scale, left: 100 * scale };
+    // const width = containerWidth;
+    const baseHeight = 400;
+    // const height = baseHeight * scale;
+    const padding = { top: 50 * scale, right: 60 * scale, bottom: 100 * scale, left: 120 * scale }; 
 
     const graphWidth = baseWidth - padding.left - padding.right;
-    const graphHeight = 400 - padding.top - padding.bottom;
+    const graphHeight = baseHeight - padding.top - padding.bottom;
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('width', '100%');
     svg.setAttribute('height', '100%');
-    svg.setAttribute('viewBox', `0 0 ${baseWidth} 400`);
+    svg.setAttribute('viewBox', `-30 -20 ${baseWidth + 60} ${baseHeight + 40}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
     if (!xpData || xpData.length === 0) {
       svg.innerHTML = `
-        <text x="${baseWidth / 2}" y="200" text-anchor="middle" fill="var(--text-secondary)" font-size="18">
+        <text x="${baseWidth / 2}" y="${baseHeight / 2}" text-anchor="middle" fill="var(--text-secondary)" font-size="${18 * scale}">
           No XP data available
         </text>
-        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
-        <line x1="${padding.left}" y1="${400 - padding.bottom}" x2="${baseWidth - padding.right}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${baseHeight - padding.bottom}" stroke="var(--text-secondary)" stroke-width="${1.5 * scale}"/>
+        <line x1="${padding.left}" y1="${baseHeight - padding.bottom}" x2="${baseWidth - padding.right}" y2="${baseHeight - padding.bottom}" stroke="var(--text-secondary)" stroke-width="${1.5 * scale}"/>
       `;
       container.innerHTML = '';
       container.appendChild(svg);
@@ -306,17 +298,17 @@ export async function fetchUserData() {
     const pathData = points
       .map((point, i) => {
         const x = padding.left + i * xScale;
-        const y = 400 - padding.bottom - point.xp * yScale;
+        const y = baseHeight - padding.bottom - point.xp * yScale;
         return i === 0 ? `M${x},${y}` : `L${x},${y}`;
       })
       .join('');
 
-    const areaData = `${pathData} L${padding.left + (points.length - 1) * xScale},${400 - padding.bottom} L${padding.left},${400 - padding.bottom} Z`;
+    const areaData = `${pathData} L${padding.left + (points.length - 1) * xScale},${baseHeight - padding.bottom} L${padding.left},${baseHeight - padding.bottom} Z`;
 
     function createSmartMonthLabels() {
       const monthLabels = [];
       let currentMonth = -1;
-      const minLabelDistance = 100;
+      const minLabelDistance = 80 * scale; // Adjusted for scale
       let lastLabelX = -minLabelDistance;
 
       points.forEach((point, i) => {
@@ -345,7 +337,7 @@ export async function fetchUserData() {
     const yTickCount = 6;
     for (let i = 0; i <= yTickCount; i++) {
       const value = (maxXP / yTickCount) * i;
-      const y = 400 - padding.bottom - value * yScale;
+      const y = baseHeight - padding.bottom - value * yScale;
       yLabels.push({ y, label: formatBytes(value) });
     }
 
@@ -359,30 +351,30 @@ export async function fetchUserData() {
       ${yLabels
         .map(
           (label) =>
-            `<line x1="${padding.left}" y1="${label.y}" x2="${baseWidth - padding.right}" y2="${label.y}" stroke="#2d3748" stroke-width="1.5" stroke-dasharray="4"/>`
+            `<line x1="${padding.left}" y1="${label.y}" x2="${baseWidth - padding.right}" y2="${label.y}" stroke="#2d3748" stroke-width="${1.5 * scale}" stroke-dasharray="4"/>`
         )
         .join('')}
       ${yLabels
         .map(
           (label) =>
-            `<text x="${padding.left - 20}" y="${label.y + 5}" text-anchor="end" fill="var(--text-color)" font-size="16" font-weight="500">${label.label}</text>`
+            `<text x="${padding.left - 30 * scale}" y="${label.y + 5 * scale}" text-anchor="end" fill="var(--text-color)" font-size="${16 * scale}" font-weight="500">${label.label}</text>`
         )
         .join('')}
       ${monthLabels
         .map(
           (label) =>
-            `<text x="${label.x}" y="${400 - padding.bottom + 40}" text-anchor="middle" fill="var(--text-color)" font-size="14">${label.label}</text>`
+            `<text x="${label.x}" y="${baseHeight - padding.bottom + 50 * scale}" text-anchor="middle" fill="var(--text-color)" font-size="${14 * scale}">${label.label}</text>`
         )
         .join('')}
-      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
-      <line x1="${padding.left}" y1="${400 - padding.bottom}" x2="${baseWidth - padding.right}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${baseHeight - padding.bottom}" stroke="var(--text-secondary)" stroke-width="${1.5 * scale}"/>
+      <line x1="${padding.left}" y1="${baseHeight - padding.bottom}" x2="${baseWidth - padding.right}" y2="${baseHeight - padding.bottom}" stroke="var(--text-secondary)" stroke-width="${1.5 * scale}"/>
       <path d="${areaData}" fill="url(#xp-gradient)" stroke="none"/>
-      <path d="${pathData}" stroke="var(--accent-color)" stroke-width="3" fill="none"/>
+      <path d="${pathData}" stroke="var(--accent-color)" stroke-width="${3 * scale}" fill="none"/>
       ${points
         .map((point, i) => {
           const x = padding.left + i * xScale;
-          const y = 400 - padding.bottom - point.xp * yScale;
-          return `<circle cx="${x}" cy="${y}" r="5" fill="var(--text-color)" stroke="var(--accent-color)" stroke-width="2"/>`;
+          const y = baseHeight - padding.bottom - point.xp * yScale;
+          return `<circle cx="${x}" cy="${y}" r="${5 * scale}" fill="var(--text-color)" stroke="var(--accent-color)" stroke-width="${2 * scale}"/>`;
         })
         .join('')}
     `;
@@ -391,7 +383,6 @@ export async function fetchUserData() {
     container.appendChild(svg);
   }
 
-  // Debounced resize handler
   const handleResize = debounce(() => {
     if (window.graphData) {
       renderLevelSVG(window.graphData.level);
