@@ -1,9 +1,17 @@
+import { formatBytes, showNotification } from '../static/notif.js';
+import { loginn } from './login.js';
 
-import { formatBytes, showNotification } from "../static/notif.js"
-import { loginn } from "./login.js"
+// Debounce function to limit resize event calls
+function debounce(func, wait) {
+  let timeout;
+  return function (...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
 
 export async function fetchUserData() {
-  const query = ` {
+  const query = `{
     user {
       login
       firstName
@@ -14,15 +22,14 @@ export async function fetchUserData() {
       totalUp
       totalDown
     }
-  level: transaction(
-   where: {type: {_eq: "level"}, event: {object: {name: {_eq: "Module"}}}}
-    order_by: { createdAt: desc}
-    limit: 1
-    ){
-    amount
+    level: transaction(
+      where: {type: {_eq: "level"}, event: {object: {name: {_eq: "Module"}}}}
+      order_by: { createdAt: desc}
+      limit: 1
+    ) {
+      amount
       type
     }
-  
     skillsTransactions: transaction(
       where: {type: {_regex: "^skill_"}}
       order_by: [{type: asc}, {createdAt: desc}]
@@ -41,409 +48,357 @@ export async function fetchUserData() {
       type
       eventId
       createdAt
-    }    
-      pro: progress(where:{eventId : {_eq : 41},object:{type:{_eq : "project"}}}){
-    object {
-      name
     }
-    isDone
-    createdAt
+    pro: progress(where:{eventId : {_eq : 41},object:{type:{_eq : "project"}}}){
+      object {
+        name
+      }
+      isDone
+      createdAt
+    }
+  }`;
+
+  const token = localStorage.getItem('token');
+  if (!token) {
+    showNotification('Session expired. Please log in.', 'error');
+    loginn();
+    return;
   }
-  }`
 
-  const token = localStorage.getItem("token")
-
-  const response = await fetch(
-    "https://learn.zone01oujda.ma/api/graphql-engine/v1/graphql",
-    {
-      method: "POST",
+  try {
+    const response = await fetch('https://learn.zone01oujda.ma/api/graphql-engine/v1/graphql', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ query: query }),
+      body: JSON.stringify({ query }),
+    });
+
+    const result = await response.json();
+    if (result.errors || !result.data) {
+      throw new Error('Failed to fetch user data');
     }
-  )
 
-  const result = await response.json()
+    const userData = result.data.user[0] || {
+      login: 'N/A',
+      firstName: 'N/A',
+      lastName: '',
+      email: 'N/A',
+      createdAt: new Date().toISOString(),
+      auditRatio: 0,
+      totalUp: 0,
+      totalDown: 0,
+    };
 
-  if (result.errors) {
-    showNotification("Error During Fetching Data", "error")
-    localStorage.removeItem("token")
-    const grp = document.getElementsByClassName("graph")[0]
-    grp.remove()
-    loginn()
-  }
+    const projectStats = (result.data.pro || []).reduce(
+      (acc, item) => ({
+        completed: item.isDone ? acc.completed + 1 : acc.completed,
+        uncompleted: !item.isDone ? acc.uncompleted + 1 : acc.uncompleted,
+      }),
+      { completed: 0, uncompleted: 0 }
+    );
 
-  let countfalse = 0
-  let counttrue = 0
-  result.data.pro.forEach(item => {
-    if (item.isDone === false) {
-      countfalse++
-    } else {
-      counttrue++
-    }
-  })
+    document.getElementById('project-completed').textContent = projectStats.completed;
+    document.getElementById('project-uncompleted').textContent = projectStats.uncompleted;
 
-  document.getElementById("project-completed").textContent = counttrue
-  document.getElementById("project-uncompleted").textContent = countfalse
+    document.getElementById('username').textContent = userData.login;
+    document.getElementById('email').textContent = userData.email;
+    document.getElementById('fullname').textContent = `${userData.firstName} ${userData.lastName}`.trim() || 'N/A';
+    document.getElementById('created-at').textContent = userData.createdAt
+      ? new Date(userData.createdAt).toLocaleDateString()
+      : 'N/A';
+    document.getElementById('audit-ratio').textContent = userData.auditRatio.toFixed(2) || '0.00';
+    document.getElementById('total-up').textContent = formatBytes(userData.totalUp);
+    document.getElementById('total-down').textContent = formatBytes(userData.totalDown);
 
-  document.getElementById("username").textContent = result.data.user[0].login
-  document.getElementById("email").textContent = result.data.user[0].email
-  document.getElementById("fullname").textContent =
-    result.data.user[0].firstName + " " + result.data.user[0].lastName
-  document.getElementById("created-at").textContent =
-    new Date(result.data.user[0].createdAt).toDateString()
+    const totalXP = (result.data.xpTRa || []).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    document.getElementById('total-xp').textContent = formatBytes(totalXP || 0);
 
-  document.getElementById("audit-ratio").textContent =
-    result.data.user[0].auditRatio.toFixed(2)
-  document.getElementById("total-up").textContent = formatBytes(
-    result.data.user[0].totalUp
-  )
-  document.getElementById("total-down").textContent = formatBytes(
-    result.data.user[0].totalDown
-  )
+    // Render visualizations
+    renderLevelSVG(result.data.level?.[0] || { amount: 0 });
+    renderSkillsSVG(result.data.skillsTransactions || []);
+    renderXPGraph(result.data.xpTRa || []);
 
-  const totalXP = result.data.xpTRa.reduce((sum, tx) => sum + tx.amount, 0)
-  document.getElementById("total-xp").textContent = formatBytes(totalXP)
+    // Store data for resize re-rendering
+    window.graphData = {
+      level: result.data.level?.[0] || { amount: 0 },
+      skills: result.data.skillsTransactions || [],
+      xp: result.data.xpTRa || [],
+    };
 
-  // Render Level SVG
-  renderLevelSVG(result.data.level[0])
-  
-  // Render Skills SVG
-  renderSkillsSVG(result.data.skillsTransactions)
-
-  function util(){
-    const data = [...result.data.xpTRa].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-
-    let total = 0
-    const points = data.map(d => {
-      total += d.amount
-      return {
-        xp: total,
-        date: new Date(d.createdAt)
-      }
-    })
-    return { data, points}
+  } catch (error) {
+    showNotification('Error fetching data. Logging out.', 'error');
+    localStorage.removeItem('token');
+    const graph = document.querySelector('.graph');
+    if (graph) graph.remove();
+    loginn();
   }
 
   function renderLevelSVG(levelData) {
-    let container = document.getElementById("level-container")
-    
-    if (!container) {
-      const levelSection = document.getElementById("level-section")
-      if (levelSection) {
-        container = document.createElement("div")
-        container.id = "level-container"
-        container.className = "level-container"
-        levelSection.appendChild(container)
-      } else {
-        const dashboard = document.querySelector(".dashboard")
-        if (dashboard) {
-          const levelSection = document.createElement("div")
-          levelSection.id = "level-section"
-          levelSection.className = "card" 
-          
-          const levelTitle = document.createElement("h2")
-          levelTitle.textContent = "Current Level"
-          levelSection.appendChild(levelTitle)
-          
-          container = document.createElement("div")
-          container.id = "level-container"
-          container.className = "level-container"
-          levelSection.appendChild(container)
-          
-          dashboard.append(levelSection, dashboard.firstChild)
-          
-        }
-      }
-    }
-    
-    if (!container) {
-      console.error("Could not create level container")
-      return
-    }
+    const container = document.getElementById('level-container') || createLevelContainer();
+    if (!container) return;
 
-    const width = 300
-    const height = 80
-    const level = levelData.amount
+    const containerWidth = container.offsetWidth || 360;
+    const baseWidth = 360;
+    const scale = containerWidth / baseWidth;
+    const width = containerWidth;
+    const height = 120 * scale;
 
-    const svgNS = "http://www.w3.org/2000/svg"
-    const svg = document.createElementNS(svgNS, "svg")
-    svg.setAttribute("width", width)
-    svg.setAttribute("height", height)
-    svg.setAttribute("class", "level-svg")
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', `0 0 ${baseWidth} ${120}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('class', 'level-svg');
 
-    const currentLevel = Math.floor(level)
-    const circumference = 2 * Math.PI * 30 
-    const strokeDasharray = circumference
+    const level = levelData.amount || 0;
+    const currentLevel = Math.floor(level);
+    const circumference = 2 * Math.PI * 40;
+    const progress = level % 1;
+    const strokeDashoffset = circumference * (1 - progress);
+
     svg.innerHTML = `
       <defs>
         <linearGradient id="level-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#6366F1;stop-opacity:1" />
-          <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
-        </linearGradient>
-        <linearGradient id="level-bg-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#374151;stop-opacity:1" />
-          <stop offset="100%" style="stop-color:#4B5563;stop-opacity:1" />
+          <stop offset="0%" style="stop-color:#5A3FFF;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#6B46C1;stop-opacity:1" />
         </linearGradient>
       </defs>
-      
-      <!-- Background circle -->
-      <circle cx="40" cy="40" r="30" fill="none" stroke="#374151" stroke-width="4"/>
-      
-      <!-- Progress circle -->
-      <circle cx="40" cy="40" r="30" fill="none" 
-        stroke="url(#level-gradient)" 
-        stroke-width="4" 
-        stroke-linecap="round"
-        stroke-dasharray="${strokeDasharray}"
-        transform="rotate(-90 40 40)">
-        <animate attributeName="stroke-dashoffset" 
-          from="${circumference}" 
-          dur="2s" 
-          begin="0.5s"/>
+      <circle cx="60" cy="60" r="40" fill="none" stroke="#2d3748" stroke-width="8"/>
+      <circle cx="60" cy="60" r="40" fill="none" stroke="url(#level-gradient)" stroke-width="8" 
+              stroke-linecap="round" stroke-dasharray="${circumference}" 
+              stroke-dashoffset="${strokeDashoffset}" transform="rotate(-90 60 60)">
+        <animate attributeName="stroke-dashoffset" from="${circumference}" to="${strokeDashoffset}" 
+                 dur="1s" fill="freeze"/>
       </circle>
-      
-      <!-- Level number -->
-      <text x="40" y="45" text-anchor="middle" fill="#FFFFFF" font-size="16" font-weight="bold">
+      <text x="60" y="67" text-anchor="middle" fill="var(--text-color)" font-size="20" font-weight="bold">
         ${currentLevel}
       </text>
+    `;
 
-    `
+    container.innerHTML = '';
+    container.appendChild(svg);
+  }
 
-    container.innerHTML = ""
-    container.appendChild(svg)
+  function createLevelContainer() {
+    const levelSection = document.getElementById('audit-analytics') || document.createElement('section');
+    levelSection.className = 'card';
+    levelSection.id = 'audit-analytics';
+
+    const container = document.createElement('div');
+    container.id = 'level-container';
+    container.className = 'level-container';
+    levelSection.appendChild(container);
+
+    if (!document.getElementById('audit-analytics')) {
+      document.querySelector('.dashboard').prepend(levelSection);
+    }
+
+    return container;
   }
 
   function renderSkillsSVG(skillsData) {
-    const container = document.getElementById("skills-list") // Your existing skills container
-    const skillHeight = 40
-    const skillSpacing = 10
-    const width = container.offsetWidth || 400
-    const height = (skillHeight + skillSpacing) * skillsData.length
-    
-    const svgNS = "http://www.w3.org/2000/svg"
-    const svg = document.createElementNS(svgNS, "svg")
-    svg.setAttribute("width", width)
-    svg.setAttribute("height", height)
-    svg.setAttribute("class", "skills-svg")
+    const container = document.getElementById('skills-list');
+    if (!container) return;
 
-    let skillElements = ""
-    
-    skillsData.forEach((skill, index) => {
-      const trim = skill.type.replace('skill_', "")
-      const y = index * (skillHeight + skillSpacing)
-      const barWidth = width - 200 // Reserve space for label and percentage
-      const fillWidth = (barWidth * skill.amount) / 100
-      
-      // Skill color based on percentage
-      let skillColor = "#EF4444" // Red for low skills
-      if (skill.amount >= 70) skillColor = "#10B981" // Green for high skills
-      else if (skill.amount >= 40) skillColor = "#F59E0B" // Yellow for medium skills
+    const containerWidth = container.offsetWidth || 600;
+    const baseWidth = 600;
+    const scale = containerWidth / baseWidth;
+    const skillHeight = 60 * scale;
+    const skillSpacing = 20 * scale;
+    const width = containerWidth;
+    const height = (skillHeight + skillSpacing) * (skillsData.length || 1);
 
-      skillElements += `
-        <!-- Skill background -->
-        <rect x="0" y="${y}" width="${width}" height="${skillHeight}" 
-          fill="#1F2937" rx="8" stroke="#374151" stroke-width="1"/>
-        
-        <!-- Skill label -->
-        <text x="15" y="${y + 15}" fill="#FFFFFF" font-size="14" font-weight="500">
-          ${trim.charAt(0).toUpperCase() + trim.slice(1)}
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', `0 0 ${baseWidth} ${(60 + 20) * (skillsData.length || 1)}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('class', 'skills-svg');
+
+    let skillElements = '';
+    if (!skillsData.length) {
+      skillElements = `
+        <text x="${baseWidth / 2}" y="${(60 + 20) / 2}" text-anchor="middle" fill="var(--text-secondary)" font-size="18">
+          No skills data available
         </text>
-        
-        <!-- Progress bar background -->
-        <rect x="15" y="${y + 22}" width="${barWidth}" height="6" rx="3" fill="#374151"/>
-        
-        <!-- Progress bar fill -->
-        <rect x="15" y="${y + 22}" width="${fillWidth}" height="6" rx="3" fill="${skillColor}">
-          <animate attributeName="width" from="0" to="${fillWidth}" dur="1s" begin="${index * 0.1}s"/>
-        </rect>
-        
-        <!-- Percentage text -->
-        <text x="${width - 15}" y="${y + 15}" text-anchor="end" fill="#A799FF" font-size="12" font-weight="600">
-          ${skill.amount}%
-        </text>
-        
-        <!-- Skill level indicator -->
-        <circle cx="${15 + fillWidth}" cy="${y + 25}" r="3" fill="${skillColor}">
-          <animate attributeName="r" from="0" to="3" dur="0.5s" begin="${index * 0.1 + 1}s"/>
-        </circle>
-      `
-    })
+      `;
+    } else {
+      skillsData.forEach((skill, index) => {
+        const trim = skill.type?.replace('skill_', '') || 'Unknown';
+        const amount = skill.amount || 0;
+        const y = index * (60 + 20);
+        const barWidth = baseWidth - 250;
+        const fillWidth = (barWidth * amount) / 100;
 
-    svg.innerHTML = `
-      <defs>
-        <linearGradient id="skill-glow" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#A799FF;stop-opacity:0.3" />
-          <stop offset="50%" style="stop-color:#A799FF;stop-opacity:0.1" />
-          <stop offset="100%" style="stop-color:#A799FF;stop-opacity:0.3" />
-        </linearGradient>
-      </defs>
-      
-      ${skillElements}
-    `
+        const skillColor =
+          amount >= 70 ? 'var(--success-color)' : amount >= 40 ? '#FBBF24' : 'var(--error-color)';
 
-    container.innerHTML = ""
-    container.appendChild(svg)
+        skillElements += `
+          <rect x="0" y="${y}" width="${baseWidth}" height="60" fill="var(--secondary-bg)" rx="8"/>
+          <text x="25" y="${y + 25}" fill="var(--text-color)" font-size="16" font-weight="500">
+            ${trim.charAt(0).toUpperCase() + trim.slice(1)}
+          </text>
+          <rect x="25" y="${y + 35}" width="${barWidth}" height="10" rx="5" fill="#2d3748"/>
+          <rect x="25" y="${y + 35}" width="${fillWidth}" height="10" rx="5" fill="${skillColor}">
+            <animate attributeName="width" from="0" to="${fillWidth}" dur="0.6s" begin="${index * 0.2}s"/>
+          </rect>
+          <text x="${baseWidth - 25}" y="${y + 25}" text-anchor="end" fill="var(--text-secondary)" font-size="14">
+            ${amount}%
+          </text>
+        `;
+      });
+    }
+
+    svg.innerHTML = skillElements;
+    container.innerHTML = '';
+    container.appendChild(svg);
   }
 
-  function renderXPGraph() {
-    const res = util()
-    
-    const container = document.querySelector("#xp-progress .progress-barr")
-    const width = container.offsetWidth
-    const height = 180
-    const padding = { top: 20, right: 30, bottom: 50, left: 80 }
+  function renderXPGraph(xpData) {
+    const container = document.querySelector('#xp-progress .progress-bar');
+    if (!container) return;
 
-    const graphWidth = width - padding.left - padding.right
-    const graphHeight = height - padding.top - padding.bottom
+    const containerWidth = container.offsetWidth || 800;
+    const baseWidth = 800;
+    const scale = containerWidth / baseWidth;
+    const width = containerWidth;
+    const height = 400 * scale;
+    const padding = { top: 50 * scale, right: 60 * scale, bottom: 80 * scale, left: 100 * scale };
 
-    const maxXP = Math.max(...res.points.map(p => p.xp))
-    const xScale = graphWidth / (res.points.length - 1 || 1)
-    const yScale = graphHeight / (maxXP || 1)
+    const graphWidth = baseWidth - padding.left - padding.right;
+    const graphHeight = 400 - padding.top - padding.bottom;
 
-    // Generate path data
-    const pathData = res.points.map((point, i) => {
-      const x = padding.left + i * xScale
-      const y = height - padding.bottom - point.xp * yScale
-      return i === 0 ? `M${x},${y}` : `L${x},${y}`
-    }).join(" ")
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', `0 0 ${baseWidth} 400`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
-    const areaData = pathData + ` L${padding.left + (res.points.length - 1) * xScale},${height - padding.bottom} L${padding.left},${height - padding.bottom} Z`
+    if (!xpData || xpData.length === 0) {
+      svg.innerHTML = `
+        <text x="${baseWidth / 2}" y="200" text-anchor="middle" fill="var(--text-secondary)" font-size="18">
+          No XP data available
+        </text>
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+        <line x1="${padding.left}" y1="${400 - padding.bottom}" x2="${baseWidth - padding.right}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+      `;
+      container.innerHTML = '';
+      container.appendChild(svg);
+      return;
+    }
 
-    // Smart Month Label Spacing
-    function createSmartMonthLabels() {
-      const monthLabels = []
-      let currentMonth = -1
-      const minLabelDistance = 60
-      let lastLabelX = -minLabelDistance
-      
-      res.points.forEach((point, i) => {
-        const month = point.date.getMonth()
-        const year = point.date.getFullYear()
-        const x = padding.left + i * xScale
-        
-        if (month !== currentMonth && (x - lastLabelX) >= minLabelDistance) {
-          currentMonth = month
-          const monthName = point.date.toLocaleString('default', { month: 'short' })
-          
-          const label = month === 0 || (monthLabels.length > 0 && 
-            new Date(res.points[0].date).getFullYear() !== year) 
-            ? `${monthName} ${year.toString().slice(-2)}` 
-            : monthName
-          
-          monthLabels.push({ x, label })
-          lastLabelX = x
-        }
+    const sortedData = [...xpData].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    let total = 0;
+    const points = sortedData.map((d) => {
+      total += d.amount || 0;
+      return { xp: total, date: new Date(d.createdAt) };
+    });
+
+    const maxXP = Math.max(...points.map((p) => p.xp), 1);
+    const xScale = points.length > 1 ? graphWidth / (points.length - 1) : graphWidth;
+    const yScale = graphHeight / maxXP;
+
+    const pathData = points
+      .map((point, i) => {
+        const x = padding.left + i * xScale;
+        const y = 400 - padding.bottom - point.xp * yScale;
+        return i === 0 ? `M${x},${y}` : `L${x},${y}`;
       })
-      
-      return monthLabels
+      .join('');
+
+    const areaData = `${pathData} L${padding.left + (points.length - 1) * xScale},${400 - padding.bottom} L${padding.left},${400 - padding.bottom} Z`;
+
+    function createSmartMonthLabels() {
+      const monthLabels = [];
+      let currentMonth = -1;
+      const minLabelDistance = 100;
+      let lastLabelX = -minLabelDistance;
+
+      points.forEach((point, i) => {
+        const month = point.date.getMonth();
+        const year = point.date.getFullYear();
+        const x = padding.left + i * xScale;
+
+        if (month !== currentMonth && (x - lastLabelX) >= minLabelDistance) {
+          currentMonth = month;
+          const monthName = point.date.toLocaleString('default', { month: 'short' });
+          const label = month === 0 || (monthLabels.length > 0 && 
+            new Date(points[0].date).getFullYear() !== year)
+            ? `${monthName} ${year.toString().slice(-2)}`
+            : monthName;
+          monthLabels.push({ x, label });
+          lastLabelX = x;
+        }
+      });
+
+      return monthLabels;
     }
 
-    // function createAdaptiveMonthLabels() {
-    //   const monthLabels = []
-    //   let currentMonth = -1
-      
-    //   const avgLabelWidth = 40
-    //   const maxLabels = Math.floor(graphWidth / avgLabelWidth)
-      
-    //   if (width < 400) {
-    //     const skipInterval = Math.max(2, Math.ceil(res.points.length / maxLabels))
-        
-    //     res.points.forEach((point, i) => {
-    //       const month = point.date.getMonth()
-    //       if (month !== currentMonth && i % skipInterval === 0) {
-    //         currentMonth = month
-    //         const x = padding.left + i * xScale
-    //         const monthName = point.date.toLocaleString('default', { month: 'short' })
-    //         monthLabels.push({ x, label: monthName })
-    //       }
-    //     })
-    //   } else if (width < 600) {
-    //     return createSmartMonthLabels()
-    //   } else {
-    //     res.points.forEach((point, i) => {
-    //       const month = point.date.getMonth()
-    //       if (month !== currentMonth) {
-    //         currentMonth = month
-    //         const x = padding.left + i * xScale
-    //         const monthName = point.date.toLocaleString('default', { month: 'short' })
-    //         monthLabels.push({ x, label: monthName })
-    //       }
-    //     })
-    //   }
-      
-    //   return monthLabels
-    // }
+    const monthLabels = createSmartMonthLabels();
 
-    // const monthLabels = createAdaptiveMonthLabels()
-
-    // Y-axis labels
-    const yLabels = []
-    const yTickCount = 5
+    const yLabels = [];
+    const yTickCount = 6;
     for (let i = 0; i <= yTickCount; i++) {
-      const value = Math.round((maxXP / yTickCount) * i)
-      const y = height - padding.bottom - value * yScale
-      yLabels.push({ y, label: formatBytes(value) })
+      const value = (maxXP / yTickCount) * i;
+      const y = 400 - padding.bottom - value * yScale;
+      yLabels.push({ y, label: formatBytes(value) });
     }
 
-    const svgNS = "http://www.w3.org/2000/svg"
-    const svg = document.createElementNS(svgNS, "svg")
-    svg.setAttribute("width", width)
-    svg.setAttribute("height", height)
-    
-    const gradientId = "xp-gradient"
-    
     svg.innerHTML = `
       <defs>
-        <linearGradient id="${gradientId}" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" style="stop-color:#A799FF;stop-opacity:0.7" />
-          <stop offset="100%" style="stop-color:#A799FF;stop-opacity:0.1" />
+        <linearGradient id="xp-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" style="stop-color:#6B46C1;stop-opacity:0.6" />
+          <stop offset="100%" style="stop-color:#6B46C1;stop-opacity:0.1" />
         </linearGradient>
       </defs>
-      
-      <!-- Grid lines -->
-      ${yLabels.map(label => 
-        `<line x1="${padding.left}" y1="${label.y}" x2="${width - padding.right}" y2="${label.y}" 
-          stroke="#3B3363" stroke-width="1" stroke-dasharray="5,5" />`
-      ).join("")}
-      
-      <!-- Y-axis labels -->
-      ${yLabels.map(label => 
-        `<text x="${padding.left - 5}" y="${label.y + 4}" text-anchor="end" 
-          fill="#A799FF" font-size="12" dominant-baseline="middle">${label.label}</text>`
-      ).join("")}      
-      <!-- Y-axis line -->
-      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" 
-        stroke="#A799FF" stroke-width="1" />
-      
-      <!-- X-axis line -->
-      <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" 
-        stroke="#A799FF" stroke-width="1" />
-      
-      <!-- Area fill -->
-      <path d="${areaData}" fill="url(#${gradientId})" stroke="none" />
-      
-      <!-- Line chart -->
-      <path d="${pathData}" stroke="#A799FF" stroke-width="2.5" fill="none" />
-      
-      <!-- Data points -->
-      ${res.points.map((point, i) => {
-        const x = padding.left + i * xScale
-        const y = height - padding.bottom - point.xp * yScale
-        return `<circle cx="${x}" cy="${y}" r="3" fill="#FFFFFF" stroke="#A799FF" stroke-width="1.5" />`
-      }).join("")}
-    `
+      ${yLabels
+        .map(
+          (label) =>
+            `<line x1="${padding.left}" y1="${label.y}" x2="${baseWidth - padding.right}" y2="${label.y}" stroke="#2d3748" stroke-width="1.5" stroke-dasharray="4"/>`
+        )
+        .join('')}
+      ${yLabels
+        .map(
+          (label) =>
+            `<text x="${padding.left - 20}" y="${label.y + 5}" text-anchor="end" fill="var(--text-color)" font-size="16" font-weight="500">${label.label}</text>`
+        )
+        .join('')}
+      ${monthLabels
+        .map(
+          (label) =>
+            `<text x="${label.x}" y="${400 - padding.bottom + 40}" text-anchor="middle" fill="var(--text-color)" font-size="14">${label.label}</text>`
+        )
+        .join('')}
+      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+      <line x1="${padding.left}" y1="${400 - padding.bottom}" x2="${baseWidth - padding.right}" y2="${400 - padding.bottom}" stroke="var(--text-secondary)" stroke-width="1.5"/>
+      <path d="${areaData}" fill="url(#xp-gradient)" stroke="none"/>
+      <path d="${pathData}" stroke="var(--accent-color)" stroke-width="3" fill="none"/>
+      ${points
+        .map((point, i) => {
+          const x = padding.left + i * xScale;
+          const y = 400 - padding.bottom - point.xp * yScale;
+          return `<circle cx="${x}" cy="${y}" r="5" fill="var(--text-color)" stroke="var(--accent-color)" stroke-width="2"/>`;
+        })
+        .join('')}
+    `;
 
-    container.innerHTML = ""
-    container.appendChild(svg)
+    container.innerHTML = '';
+    container.appendChild(svg);
   }
 
-  renderXPGraph()
+  // Debounced resize handler
+  const handleResize = debounce(() => {
+    if (window.graphData) {
+      renderLevelSVG(window.graphData.level);
+      renderSkillsSVG(window.graphData.skills);
+      renderXPGraph(window.graphData.xp);
+    }
+  }, 200);
 
-  window.addEventListener("resize", () => {
-    renderXPGraph()
-    renderSkillsSVG(result.data.skillsTransactions) // Re-render skills on resize
-  })
+  window.addEventListener('resize', handleResize);
 }

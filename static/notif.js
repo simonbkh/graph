@@ -1,26 +1,22 @@
 function showNotification(message, type) {
   const notification = document.getElementById('notification');
-  notification.textContent = message;
+  if (!notification) return;
+
+  notification.textContent = message || 'Notification';
   notification.classList.add('show');
-  if (type === "error") {
-    notification.style.backgroundColor = "red";
-  } else {
-    notification.style.backgroundColor = "green";
-  }
+  notification.style.backgroundColor = type === 'error' ? 'var(--error-color)' : 'var(--success-color)';
+
   setTimeout(() => {
     notification.classList.remove('show');
   }, 4000);
 }
+
 function formatBytes(bytes) {
-  if (bytes >= 1_000_000_000) {
-    return (bytes / 1_000_000_000).toFixed(2) + " GB";
-  } else if (bytes >= 1_000_000) {
-    return (bytes / 1_000_000).toFixed(2) + " MB";
-  } else if (bytes >= 1_000) {
-    return (bytes / 1_000).toFixed(2) + " KB";
-  } else {
-    return bytes + " B";
-  }
+  if (!bytes || bytes < 0) return '0 B';
+  if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(2) + ' GB';
+  if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(2) + ' MB';
+  if (bytes >= 1_000) return (bytes / 1_000).toFixed(2) + ' KB';
+  return bytes + ' B';
 }
-// const format = (bytes) => (bytes >= 1_000_000_00 ? bytes / 1_000_000_000).toFixed(2) + " GB": bytes >= 1_000_000)
+
 export { showNotification, formatBytes };
